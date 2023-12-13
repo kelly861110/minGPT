@@ -44,8 +44,13 @@ class CausalSelfAttention(nn.Module):
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
         # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+        """self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                                     .view(1, 1, config.block_size, config.block_size))"""
+        self.register_buffer("bias", torch.ones(config.block_size, config.block_size)
                                      .view(1, 1, config.block_size, config.block_size))
+        # need new attention
+        
+        
         self.n_head = config.n_head
         self.n_embd = config.n_embd
 
@@ -110,6 +115,7 @@ class GPT(nn.Module):
         C.embd_pdrop = 0.1
         C.resid_pdrop = 0.1
         C.attn_pdrop = 0.1
+        #C.checkpoint = None
         return C
 
     def __init__(self, config):
@@ -117,6 +123,7 @@ class GPT(nn.Module):
         assert config.vocab_size is not None
         assert config.block_size is not None
         self.block_size = config.block_size
+        
 
         type_given = config.model_type is not None
         params_given = all([config.n_layer is not None, config.n_head is not None, config.n_embd is not None])
@@ -149,6 +156,19 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        
+
+
+
+        if config.checkpoint:
+            self.checkpoint = torch.load(config.checkpoint)
+            #self.load_state_dict(self.checkpoint['model_state_dict'])
+            self.transformer.load_state_dict(self.checkpoint['model_state_dict'])
+            #self.transformer.optimizer.load_state_dict(self.checkpoint['optimizer_state_dict'])
+            #self.saved_loss = self.checkpoint['saved_loss']
+        else:
+            self.checkpoint = None
+
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
@@ -159,6 +179,9 @@ class GPT(nn.Module):
         # report number of parameters (note we don't count the decoder parameters in lm_head)
         n_params = sum(p.numel() for p in self.transformer.parameters())
         print("number of parameters: %.2fM" % (n_params/1e6,))
+
+        
+    
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -255,6 +278,8 @@ class GPT(nn.Module):
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
+        if self.checkpoint:
+            optimizer.load_state_dict(self.checkpoint['optimizer_state_dict'])
         return optimizer
 
     def forward(self, idx, targets=None):
