@@ -26,6 +26,7 @@ class Trainer:
         C.betas = (0.9, 0.95)
         C.weight_decay = 0.1 # only applied on matmul weights
         C.grad_norm_clip = 1.0
+        C.checkpoint_iters = 50
         return C
 
     def __init__(self, config, model, train_dataset):
@@ -60,11 +61,11 @@ class Trainer:
 
     def run(self):
         model, config = self.model, self.config
-
+    
         # setup the optimizer
         self.optimizer = model.configure_optimizers(config)
 
-        # setup the dataloader
+        # setup the dataloader  ## change here?
         train_loader = DataLoader(
             self.train_dataset,
             sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
@@ -86,8 +87,12 @@ class Trainer:
             except StopIteration:
                 data_iter = iter(train_loader)
                 batch = next(data_iter)
+
             batch = [t.to(self.device) for t in batch]
             x, y = batch
+
+            x = x.squeeze(0) # flatten the data
+            y = y.squeeze(0)
 
             # forward the model
             logits, self.loss = model(x, y)
@@ -103,7 +108,22 @@ class Trainer:
             tnow = time.time()
             self.iter_dt = tnow - self.iter_time
             self.iter_time = tnow
+            
+            # what is status of the learning rate schedule
+            if self.iter_num % self.config.checkpoint_iters == 0:
+                checkpoint = {
+                'model_state_dict': model.transformer.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'loss': self.loss
+                }
+                torch.save(checkpoint, f'model_checkpoint_iter_{self.iter_num}.pth')
+                
+                
 
             # termination conditions
             if config.max_iters is not None and self.iter_num >= config.max_iters:
                 break
+
+
+
+
